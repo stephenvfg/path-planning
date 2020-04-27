@@ -88,6 +88,12 @@ int main() {
           //   of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
 
+          // BEGIN finite state machine assessment
+
+          double lane = 2.0;
+
+          // END finite state machine assessment
+
           json msgJson;
 
           vector<double> next_x_vals;
@@ -108,7 +114,7 @@ int main() {
             next_y_vals.push_back(previous_path_y[i]);
           }
 
-          if (path_size == 0) {
+          if (path_size < 2) {
             pos_x = car_x;
             pos_y = car_y;
             angle = deg2rad(car_yaw);
@@ -122,17 +128,21 @@ int main() {
             angle = atan2(pos_y-pos_y2,pos_x-pos_x2);
           }
 
+          // The maximum miles-per-hour speed permitted on the track
+          double max_mph = 49.5;
+
+          // calculate distance increment based on speed (mph -> kmph -> mps -> meters per increment)
+          double dist_inc = max_mph * 1.609 * (1.0/3.6) * (1.0/50.0);
+
           // convert the current position to frenet
           vector<double> f = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
-
-          double dist_inc = 0.5;
 
           // append as many path points as necessary to extend the previous path to a fresh 50 points
           for (int i = 0; i < 50-path_size; ++i) {    
 
             // iterate to the next position in frenet
             double next_s = f[0] + (i+1)*dist_inc;
-            double next_d = f[1];
+            double next_d = 2.0 + 4.0*(lane-1.0);
 
             // convert the next position back to frenet
             vector<double> xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
