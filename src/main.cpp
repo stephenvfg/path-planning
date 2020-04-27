@@ -93,11 +93,55 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          /**
-           * TODO: define a path made up of (x,y) points that the car will visit
-           *   sequentially every .02 seconds
-           */
+          // BEGIN path generation code
 
+          double pos_x;
+          double pos_y;
+          double angle;
+
+          // size of REMAINING points from previous path since last time interval
+          int path_size = previous_path_x.size(); 
+
+          // collects remanining points from prior path to repurpose for new path 
+          for (int i = 0; i < path_size; ++i) {
+            next_x_vals.push_back(previous_path_x[i]);
+            next_y_vals.push_back(previous_path_y[i]);
+          }
+
+          if (path_size == 0) {
+            pos_x = car_x;
+            pos_y = car_y;
+            angle = deg2rad(car_yaw);
+          } else {
+            // use recent path data to position the vehicle
+            pos_x = previous_path_x[path_size-1];
+            pos_y = previous_path_y[path_size-1];
+
+            double pos_x2 = previous_path_x[path_size-2];
+            double pos_y2 = previous_path_y[path_size-2];
+            angle = atan2(pos_y-pos_y2,pos_x-pos_x2);
+          }
+
+          // convert the current position to frenet
+          vector<double> f = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
+
+          double dist_inc = 0.5;
+
+          // append as many path points as necessary to extend the previous path to a fresh 50 points
+          for (int i = 0; i < 50-path_size; ++i) {    
+
+            // iterate to the next position in frenet
+            double next_s = f[0] + (i+1)*dist_inc;
+            double next_d = f[1];
+
+            // convert the next position back to frenet
+            vector<double> xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+            next_x_vals.push_back(xy[0]);
+            next_y_vals.push_back(xy[1]);
+          }
+
+          // END path generation code
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
