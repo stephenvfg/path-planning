@@ -54,12 +54,13 @@ int main() {
   // starting lane
   int lane = 1;
 
-  // reference velocity - in this case it is close to the max mph
-  double ref_v = 49.5;
+  // reference and maximum velocity
+  double ref_v = 0.0;
+  double max_v = 49.5;
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy,
-               &lane,&ref_v]
+               &lane,&ref_v,&max_v]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -92,18 +93,53 @@ int main() {
           double end_path_s = j[1]["end_path_s"];
           double end_path_d = j[1]["end_path_d"];
 
-          // Sensor Fusion Data, a list of all other cars on the same side 
-          //   of the road.
+          // Sensor Fusion Data, a list of all other cars on the same side of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
-
-          // BEGIN finite state machine assessment
-
-          // END finite state machine assessment
-
-          // BEGIN path generation code
 
           // size of REMAINING points from previous path since last time interval
           int path_size = previous_path_x.size(); 
+
+          // BEGIN finite state machine assessment
+
+          // END finite state machine assessment; BEGIN sensor fusion data processing
+
+          // if the car has already moved along a path, update our vehicle position
+          if (path_size > 0) {
+            car_s = end_path_s;
+          }
+
+          // store whether or not we are at risk of collision
+          bool col_risk_front = false;
+          double min_gap = 30.0;
+
+          // cycle through sensior fusion data to understand which cars are nearby
+          for (int i = 0; i < sensor_fusion.size(); i++) {
+            // check if the detected car is in my lane
+            float sense_d = sensor_fusion[i][6];
+            if ((sense_d < (2+4*lane+2)) && (sense_d > (2+4*lane-2))) {
+              double sense_vx = sensor_fusion[i][3];
+              double sense_vy = sensor_fusion[i][4];
+              double sense_spd = sqrt(pow(sense_vx,2) + pow(sense_vy,2));
+              double sense_s = sensor_fusion[i][5];
+
+              // project where the car will be in the future
+              sense_s += ((double)path_size * 0.02 * sense_spd);
+
+              // check if the car is within the minimum gap range, flag collision risk if true
+              if ((sense_s > car_s) && ((sense_s - car_s) < min_gap)) {
+                col_risk_front = true;
+              }
+            }
+          }
+
+          // update the car velocity based on whether or not it is close to other vehicles
+          if (col_risk_front) {
+            ref_v -= .224;
+          } else if (ref_v < max_v) {
+            ref_v += .224;
+          }
+
+          // END sensor fusion data processing; BEGIN path generation code
 
           // creating a list to store widely spaces points to use for a spline to smooth the path
           vector<double> spline_pts_x;
