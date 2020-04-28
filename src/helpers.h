@@ -154,4 +154,86 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s,
   return {x,y};
 }
 
+// Returns the list of successor states provided a current state
+vector<string> getSuccessorStates(string state) {
+
+  vector<string> states;
+
+  // always consider the option to remain in the current lane
+  states.push_back("KL");
+
+  if(state.compare("KL") == 0) {
+    states.push_back("PLCL");
+    states.push_back("PLCR");
+  } else if (state.compare("PLCL") == 0) {
+    states.push_back("PLCL");
+    states.push_back("LCL");
+  } else if (state.compare("PLCR") == 0) {
+    states.push_back("PLCR");
+    states.push_back("LCR");
+  }
+    
+  // If state is "LCL" or "LCR", then just return "KL"
+  return states;
+}
+
+// Calculates cost of switching into a new lane based on the speed of the vehicle in that lane
+// Returns higher costs for lanes with slower vehicles compared to the ego vehicle
+float cost_lane_speed(double car_speed, double lane_speed) {
+
+  // Return the delta between the speed of the car and the speed of the lane
+  return car_speed - lane_speed;
+}
+
+// Calculates cost of switching into a new lane based on the risk of colliding into another vehicle
+// Returns higher costs for lanes with a vehicle near the position of the ego vehicle
+float cost_lane_change_risk(double car_s, int target_lane, int path_size, vector<vector<double>> &sensor_fusion) {
+
+  float max_cost = 0.0;
+  double min_gap = 30.0;
+
+  // cycle through sensior fusion data to understand which cars are nearby
+  for (int i = 0; i < sensor_fusion.size(); i++) {
+    // check if the detected car is in my lane
+    float sense_d = sensor_fusion[i][6];
+    if ((sense_d < (2+4*target_lane+2)) && (sense_d > (2+4*target_lane-2))) {
+      double sense_vx = sensor_fusion[i][3];
+      double sense_vy = sensor_fusion[i][4];
+      double sense_spd = sqrt(pow(sense_vx,2) + pow(sense_vy,2));
+      double sense_s = sensor_fusion[i][5];
+
+      // project where the car will be in the future
+      sense_s += ((double)path_size * 0.02 * sense_spd);
+
+      // check if the car is within the minimum gap range
+      // if true, calculate the cost based on the proximity to the ego vehicle
+      if ((sense_s > car_s) && ((sense_s - car_s) < min_gap)) {
+        float cost = min_gap - fabs(sense_s - car_s);
+        if (cost > max_cost) {
+          // retian the highest cost so far
+          max_cost = cost;
+        }
+      }
+    }
+  }
+
+  // Return the cost representing the vehicle closest to the ego car
+  return max_cost;
+}
+
+// Calculates the cost of a movement based on different cost factors
+float calculate_cost(double car_speed, double lane_speed, double car_s, int target_lane, 
+                     int path_size, vector<vector<double>> &sensor_fusion) {
+  // define weights for the costs
+  double lane_speed_weight = 1.0;
+  double lane_change_risk_weight = 100.0;
+
+  // calculate costs of individual factors
+  float lane_speed_cost = cost_lane_speed(car_speed, lane_speed);
+  float lane_change_risk_cost = cost_lane_change_risk(car_s, target_lane, path_size, sensor_fusion);
+
+  // determine the total cost based on individual costs and weights
+  return (lane_speed_weight * lane_speed_cost) + (lane_change_risk_weight * lane_change_risk_cost);
+}
+
 #endif  // HELPERS_H

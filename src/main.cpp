@@ -57,10 +57,14 @@ int main() {
   // reference and maximum velocity
   double ref_v = 0.0;
   double max_v = 49.5;
+  double max_v_plc = 44.5; // slow down when planning a lane shift
+
+  // keep track of the current vehicle state
+  string state = "KL";
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy,
-               &lane,&ref_v,&max_v]
+               &lane,&ref_v,&max_v,&max_v_plc,&state]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -99,9 +103,7 @@ int main() {
           // size of REMAINING points from previous path since last time interval
           int path_size = previous_path_x.size(); 
 
-          // BEGIN finite state machine assessment
-
-          // END finite state machine assessment; BEGIN sensor fusion data processing
+          // BEGIN sensor fusion data processing
 
           // if the car has already moved along a path, update our vehicle position
           if (path_size > 0) {
@@ -132,14 +134,30 @@ int main() {
             }
           }
 
-          // update the car velocity based on whether or not it is close to other vehicles
-          if (col_risk_front) {
-            ref_v -= .224;
-          } else if (ref_v < max_v) {
-            ref_v += .224;
+          // END sensor fusion data processing; BEGIN finite state machine assessment
+
+          vector<string> states = getSuccessorStates(state);
+
+          // END finite state machine assessment; BEGIN state processing
+
+          if(state.compare("KL") == 0) {
+            // update the car velocity based on whether or not it is close to other vehicles
+            if (col_risk_front) {
+              ref_v -= .224;
+            } else if (ref_v < max_v) {
+              ref_v += .224;
+            }
+          } else if (state.compare("PLCL") == 0) {
+            
+          } else if (state.compare("PLCR") == 0) {
+
+          }
+          // merge into left lane to avoid car
+          if (lane > 0) {
+            lane = 0;
           }
 
-          // END sensor fusion data processing; BEGIN path generation code
+          // END state processing; BEGIN path generation code
 
           // creating a list to store widely spaces points to use for a spline to smooth the path
           vector<double> spline_pts_x;
