@@ -182,17 +182,22 @@ vector<string> getSuccessorStates(string state, int lane, double ref_v, double m
 
 // Calculates cost of switching into a new lane based on the speed of the vehicle in that lane
 // Returns higher costs for lanes with slower vehicles compared to the ego vehicle
-float cost_lane_speed(double car_speed, int target_lane, vector<vector<double>> &sensor_fusion) {
+float cost_lane_speed(double car_s, double car_speed, int target_lane, vector<vector<double>> &sensor_fusion) {
 
   // set the minimum speed as the current car speed
   // we only care about cost if there are cars going less than the current speed
   double min_speed = car_speed;
+  // we also only care if cars are close enough for their speed to matter
+  double relevant_gap = 120.0;
 
   // cycle through sensior fusion data to understand which cars are nearby
   for (int i = 0; i < sensor_fusion.size(); i++) {
     // check if the detected car is in my lane
+    // also check that the car is within a relevant closeness to mine
     float sense_d = sensor_fusion[i][6];
-    if ((sense_d < (2+4*target_lane+2)) && (sense_d > (2+4*target_lane-2))) {
+    double sense_s = sensor_fusion[i][5];
+    if ((sense_d < (2+4*target_lane+2)) && (sense_d > (2+4*target_lane-2))
+         && (sense_s > car_s) && ((sense_s - car_s) < relevant_gap)) {
       // calculate the speed of the detected car
       double sense_vx = sensor_fusion[i][3];
       double sense_vy = sensor_fusion[i][4];
@@ -215,6 +220,7 @@ float cost_lane_change_risk(double car_s, int target_lane, int path_size, vector
 
   float max_cost = 0.0;
   double min_gap = 30.0;
+  double min_gap_behind = 10.0;
 
   // cycle through sensior fusion data to understand which cars are nearby
   for (int i = 0; i < sensor_fusion.size(); i++) {
@@ -231,7 +237,7 @@ float cost_lane_change_risk(double car_s, int target_lane, int path_size, vector
 
       // check if the car is within the minimum gap range
       // if true, calculate the cost based on the proximity to the ego vehicle
-      if ((sense_s > car_s) && ((sense_s - car_s) < min_gap)) {
+      if (((sense_s > car_s) && ((sense_s - car_s) < min_gap)) || ((car_s - sense_s) < min_gap_behind)) {
         float cost = min_gap - fabs(sense_s - car_s);
         if (cost > max_cost) {
           // retain the highest cost so far
@@ -254,11 +260,11 @@ float cost_lane_change(int lane, int target_lane) {
 float calculate_cost(double car_speed, double car_s, int lane, int target_lane, int path_size, vector<vector<double>> &sensor_fusion) {
   // define weights for the costs
   double lane_speed_weight = 1.0;
-  double lane_change_weight = 5.0;
+  double lane_change_weight = 7.0;
   double lane_change_risk_weight = 100.0;
 
   // calculate costs of individual factors
-  float lane_speed_cost = cost_lane_speed(car_speed, target_lane, sensor_fusion);
+  float lane_speed_cost = cost_lane_speed(car_s, car_speed, target_lane, sensor_fusion);
   float lane_change_cost = cost_lane_change(lane, target_lane);
   float lane_change_risk_cost = cost_lane_change_risk(car_s, target_lane, path_size, sensor_fusion);
 
