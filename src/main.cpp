@@ -7,6 +7,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "helpers.h"
 #include "json.hpp"
+#include "spline.h"
 
 // for convenience
 using nlohmann::json;
@@ -50,8 +51,15 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
+  // starting lane
+  int lane = 1;
+
+  // reference velocity - in this case it is close to the max mph
+  double ref_v = 49.5;
+
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
-               &map_waypoints_dx,&map_waypoints_dy]
+               &map_waypoints_dx,&map_waypoints_dy,
+               &lane,&ref_v]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -90,69 +98,124 @@ int main() {
 
           // BEGIN finite state machine assessment
 
-          double lane = 2.0;
-
           // END finite state machine assessment
 
-          json msgJson;
-
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
-
           // BEGIN path generation code
-
-          double pos_x;
-          double pos_y;
-          double angle;
 
           // size of REMAINING points from previous path since last time interval
           int path_size = previous_path_x.size(); 
 
+          // creating a list to store widely spaces points to use for a spline to smooth the path
+          vector<double> spline_pts_x;
+          vector<double> spline_pts_y;
+
+          // define reference x, y, yaw states for the vehicle
+          double ref_x = car_x;
+          double ref_y = car_y;
+          double ref_yaw = deg2rad(car_yaw);
+
+          // identify initial path points
+          if (path_size < 2) {
+            // use two points to define a path tangent to the car
+            double prev_car_x = car_x - cos(car_yaw);
+            double prev_car_y = car_y - sin(car_yaw);
+
+            // append these points to the previous points list
+            spline_pts_x.push_back(prev_car_x);
+            spline_pts_x.push_back(car_x);
+            spline_pts_y.push_back(prev_car_y);
+            spline_pts_y.push_back(car_y);
+          } else {
+            // use recent path data to position the vehicle
+            ref_x = previous_path_x[path_size-1];
+            ref_y = previous_path_y[path_size-1];
+
+            // obtain an additional point to form a path tangent to the car
+            double prev_ref_x = previous_path_x[path_size-2];
+            double prev_ref_y = previous_path_y[path_size-2];
+            ref_yaw = atan2(ref_y-prev_ref_y, ref_x-prev_ref_x);
+
+            // append these points to the previous points list
+            spline_pts_x.push_back(prev_ref_x);
+            spline_pts_x.push_back(ref_x);
+            spline_pts_y.push_back(prev_ref_y);
+            spline_pts_y.push_back(ref_y);
+          }
+
+          // add a few additional points spaced out by 30m each (in Frenet) to help create the spline
+          vector<double> next_spline0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector<double> next_spline1 = getXY(car_s+60, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector<double> next_spline2 = getXY(car_s+90, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+          // append these points to the previous points list
+          spline_pts_x.push_back(next_spline0[0]);
+          spline_pts_x.push_back(next_spline1[0]);
+          spline_pts_x.push_back(next_spline2[0]);
+
+          spline_pts_y.push_back(next_spline0[1]);
+          spline_pts_y.push_back(next_spline1[1]);
+          spline_pts_y.push_back(next_spline2[1]);
+
+          // shift coordinates to local vehicle coordinates
+          for (int i = 0; i < spline_pts_x.size(); ++i) {
+            // calculate the shift to bring the car reference angle to 0 degrees
+            double shift_x = spline_pts_x[i] - ref_x;
+            double shift_y = spline_pts_y[i] - ref_y;
+
+            // shift the reference for each point
+            spline_pts_x[i] = (shift_x * cos(0-ref_yaw) - shift_y * sin(0-ref_yaw));
+            spline_pts_y[i] = (shift_x * sin(0-ref_yaw) + shift_y * cos(0-ref_yaw));
+          }
+
+          // create a spline for the path and set the points to it
+          tk::spline s;
+          s.set_points(spline_pts_x, spline_pts_y);
+
+          // define the actual path points
+          vector<double> next_x_vals;
+          vector<double> next_y_vals;
+
           // collects remanining points from prior path to repurpose for new path 
-          for (int i = 0; i < path_size; ++i) {
+          for (int i = 0; i < path_size; i++) {
             next_x_vals.push_back(previous_path_x[i]);
             next_y_vals.push_back(previous_path_y[i]);
           }
 
-          if (path_size < 2) {
-            pos_x = car_x;
-            pos_y = car_y;
-            angle = deg2rad(car_yaw);
-          } else {
-            // use recent path data to position the vehicle
-            pos_x = previous_path_x[path_size-1];
-            pos_y = previous_path_y[path_size-1];
+          // calculate how to break up the spline points
+          double target_x = 30.0;
+          double target_y = s(target_x);
+          double target_dist = sqrt(pow(target_x, 2) + pow(target_y, 2));
+          double x_start = 0.0;
 
-            double pos_x2 = previous_path_x[path_size-2];
-            double pos_y2 = previous_path_y[path_size-2];
-            angle = atan2(pos_y-pos_y2,pos_x-pos_x2);
-          }
-
-          // The maximum miles-per-hour speed permitted on the track
-          double max_mph = 49.5;
-
-          // calculate distance increment based on speed (mph -> kmph -> mps -> meters per increment)
-          double dist_inc = max_mph * 1.609 * (1.0/3.6) * (1.0/50.0);
-
-          // convert the current position to frenet
-          vector<double> f = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
-
+          // complete the path with the help of the spline
           // append as many path points as necessary to extend the previous path to a fresh 50 points
-          for (int i = 0; i < 50-path_size; ++i) {    
+          for (int i = 0; i < 50-path_size; i++) {    
+            // place the next point along the spline such that it puts the vehicle at the reference velocity
+            double N = (target_dist / (.02*ref_v/2.24));
+            double x_point = x_start + (target_x)/N;
+            double y_point = s(x_point);
 
-            // iterate to the next position in frenet
-            double next_s = f[0] + (i+1)*dist_inc;
-            double next_d = 2.0 + 4.0*(lane-1.0);
+            // update the x starting point
+            x_start = x_point;
 
-            // convert the next position back to frenet
-            vector<double> xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            // save these values for later
+            double x_ref = x_point;
+            double y_ref = y_point;
 
-            next_x_vals.push_back(xy[0]);
-            next_y_vals.push_back(xy[1]);
+            // rotate (x,y) back to its original position
+            x_point = (x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw));
+            y_point = (x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw));
+            x_point += ref_x;
+            y_point += ref_y;
+
+            // add points to the path
+            next_x_vals.push_back(x_point);
+            next_y_vals.push_back(y_point);
           }
 
           // END path generation code
 
+          json msgJson;
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
