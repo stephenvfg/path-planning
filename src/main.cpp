@@ -114,6 +114,9 @@ int main() {
           bool col_risk_front = false;
           double min_gap = 30.0;
 
+          // store sensor fusion data for later
+          vector<vector<double>> sensor_fusion_data;
+
           // cycle through sensior fusion data to understand which cars are nearby
           for (int i = 0; i < sensor_fusion.size(); i++) {
             // check if the detected car is in my lane
@@ -132,15 +135,54 @@ int main() {
                 col_risk_front = true;
               }
             }
+
+            // store the data for later use
+            sensor_fusion_data.push_back({sensor_fusion[i][0], sensor_fusion[i][1], sensor_fusion[i][2], sensor_fusion[i][3], 
+                                          sensor_fusion[i][4], sensor_fusion[i][5], sensor_fusion[i][6]});
           }
 
           // END sensor fusion data processing; BEGIN finite state machine assessment
 
-          vector<string> states = getSuccessorStates(state);
+          // retrieve all possible successor states based on current state and lane, speed
+          vector<string> states = getSuccessorStates(state, lane, ref_v, max_v_plc);
+
+          // prepare to retrieve the minimum cost lane
+          float min_cost = -1.0;
+          string min_state = state;
+          double car_speed_mps = ref_v/2.24;
+
+          // calculate the cost for each successor state
+          // retain the cost and state for the cheapest cost state
+          for (int i = 0; i < states.size(); i++) {
+            if (states[i].compare("KL") == 0) { 
+              float cost = calculate_cost(car_speed_mps, car_s, lane, lane, path_size, sensor_fusion_data);
+              if (cost < min_cost || min_cost == -1.0) { 
+                min_cost = cost; 
+                min_state = states[i];
+              }
+            } else if (states[i].compare("PLCL") == 0 || states[i].compare("LCL") == 0) { 
+              float cost = calculate_cost(car_speed_mps, car_s, lane, lane - 1, path_size, sensor_fusion_data);
+              if (cost < min_cost || min_cost == -1.0) { 
+                min_cost = cost; 
+                min_state = states[i];
+              }
+            } else if (states[i].compare("PLCR") == 0 || states[i].compare("LCR") == 0) { 
+              float cost = calculate_cost(car_speed_mps, car_s, lane, lane + 1, path_size, sensor_fusion_data);
+              if (cost < min_cost || min_cost == -1.0) { 
+                min_cost = cost; 
+                min_state = states[i];
+              }
+            }
+          }
+
+          // update the new state to the lowest cost state
+          state = min_state;
 
           // END finite state machine assessment; BEGIN state processing
 
+          // go through the possible state options
           if(state.compare("KL") == 0) {
+            // if the state is the "Keep Lane" then simply check speed and the car in front
             // update the car velocity based on whether or not it is close to other vehicles
             if (col_risk_front) {
               ref_v -= .224;
@@ -148,13 +190,19 @@ int main() {
               ref_v += .224;
             }
           } else if (state.compare("PLCL") == 0) {
-            
+            // if the state is the "Plan Lane Change __" then slow down
+            if (ref_v > max_v_plc) {
+              ref_v -= .224;
+            }
           } else if (state.compare("PLCR") == 0) {
-
-          }
-          // merge into left lane to avoid car
-          if (lane > 0) {
-            lane = 0;
+            if (ref_v > max_v_plc) {
+              ref_v -= .224;
+            }
+          } else if (state.compare("LCL") == 0) {
+            // if the state is the "Lane Change ___" then change lane
+            lane -= 1;
+          } else if (state.compare("LCR") == 0) {
+            lane += 1;
           }
 
           // END state processing; BEGIN path generation code

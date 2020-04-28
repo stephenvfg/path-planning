@@ -155,7 +155,7 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s,
 }
 
 // Returns the list of successor states provided a current state
-vector<string> getSuccessorStates(string state) {
+vector<string> getSuccessorStates(string state, int lane, double ref_v, double max_v_plc) {
 
   vector<string> states;
 
@@ -163,14 +163,17 @@ vector<string> getSuccessorStates(string state) {
   states.push_back("KL");
 
   if(state.compare("KL") == 0) {
-    states.push_back("PLCL");
-    states.push_back("PLCR");
+    // add lane change planning states only if there is an available lane to merge into
+    if (lane > 0) { states.push_back("PLCL"); }
+    if (lane < 2) { states.push_back("PLCR"); }
   } else if (state.compare("PLCL") == 0) {
-    states.push_back("PLCL");
-    states.push_back("LCL");
+    // either continue to plan a lane change, or do the lane change dependent on velocity
+    if (ref_v > max_v_plc) { states.push_back("PLCL"); }
+    else { states.push_back("LCL"); }
   } else if (state.compare("PLCR") == 0) {
-    states.push_back("PLCR");
-    states.push_back("LCR");
+    // either continue to plan a lane change, or do the lane change dependent on velocity
+    if (ref_v > max_v_plc) { states.push_back("PLCR"); }
+    else { states.push_back("LCR"); }
   }
     
   // If state is "LCL" or "LCR", then just return "KL"
@@ -179,10 +182,31 @@ vector<string> getSuccessorStates(string state) {
 
 // Calculates cost of switching into a new lane based on the speed of the vehicle in that lane
 // Returns higher costs for lanes with slower vehicles compared to the ego vehicle
-float cost_lane_speed(double car_speed, double lane_speed) {
+float cost_lane_speed(double car_speed, int target_lane, vector<vector<double>> &sensor_fusion) {
+
+  // set the minimum speed as the current car speed
+  // we only care about cost if there are cars going less than the current speed
+  double min_speed = car_speed;
+
+  // cycle through sensior fusion data to understand which cars are nearby
+  for (int i = 0; i < sensor_fusion.size(); i++) {
+    // check if the detected car is in my lane
+    float sense_d = sensor_fusion[i][6];
+    if ((sense_d < (2+4*target_lane+2)) && (sense_d > (2+4*target_lane-2))) {
+      // calculate the speed of the detected car
+      double sense_vx = sensor_fusion[i][3];
+      double sense_vy = sensor_fusion[i][4];
+      double sense_spd = sqrt(pow(sense_vx,2) + pow(sense_vy,2));
+
+      // if the car is going slower than the min speed then set it as the new min speed
+      if (sense_spd < min_speed) {
+        min_speed = sense_spd;
+      }
+    }
+  }
 
   // Return the delta between the speed of the car and the speed of the lane
-  return car_speed - lane_speed;
+  return car_speed - min_speed;
 }
 
 // Calculates cost of switching into a new lane based on the risk of colliding into another vehicle
@@ -210,7 +234,7 @@ float cost_lane_change_risk(double car_s, int target_lane, int path_size, vector
       if ((sense_s > car_s) && ((sense_s - car_s) < min_gap)) {
         float cost = min_gap - fabs(sense_s - car_s);
         if (cost > max_cost) {
-          // retian the highest cost so far
+          // retain the highest cost so far
           max_cost = cost;
         }
       }
@@ -221,19 +245,25 @@ float cost_lane_change_risk(double car_s, int target_lane, int path_size, vector
   return max_cost;
 }
 
+// Calculate the cost of performing a lane change
+float cost_lane_change(int lane, int target_lane) {
+  return fabs(target_lane - lane);
+}
+
 // Calculates the cost of a movement based on different cost factors
-float calculate_cost(double car_speed, double lane_speed, double car_s, int target_lane, 
-                     int path_size, vector<vector<double>> &sensor_fusion) {
+float calculate_cost(double car_speed, double car_s, int lane, int target_lane, int path_size, vector<vector<double>> &sensor_fusion) {
   // define weights for the costs
   double lane_speed_weight = 1.0;
+  double lane_change_weight = 5.0;
   double lane_change_risk_weight = 100.0;
 
   // calculate costs of individual factors
-  float lane_speed_cost = cost_lane_speed(car_speed, lane_speed);
+  float lane_speed_cost = cost_lane_speed(car_speed, target_lane, sensor_fusion);
+  float lane_change_cost = cost_lane_change(lane, target_lane);
   float lane_change_risk_cost = cost_lane_change_risk(car_s, target_lane, path_size, sensor_fusion);
 
   // determine the total cost based on individual costs and weights
-  return (lane_speed_weight * lane_speed_cost) + (lane_change_risk_weight * lane_change_risk_cost);
+  return (lane_speed_weight*lane_speed_cost) + (lane_change_weight*lane_change_cost) + (lane_change_risk_weight*lane_change_risk_cost);
 }
 
 #endif  // HELPERS_H
